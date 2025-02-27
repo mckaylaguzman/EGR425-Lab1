@@ -17,6 +17,7 @@ Adafruit_seesaw gamepad;
 #define BUTTON_START 16
 #define BUTTON_SELECT 0
 int blueX = 150, blueY = 100, blueSpeed = 1;
+bool showGameScreen = false;  // Flag to control screen transition
 
 ///////////////////////////////////////////////////////////////
 // BLE UUIDs
@@ -53,6 +54,7 @@ class MyClientCallback : public BLEClientCallbacks {
     void onDisconnect(BLEClient *pclient) {
         deviceConnected = false;
         Serial.println("Device disconnected...");
+        showGameScreen = true; // Ensure game screen still shows even if disconnected
     }
 };
 
@@ -66,34 +68,36 @@ bool connectToServer() {
 
     if (!bleClient->connect(bleRemoteServer)) {
         Serial.printf("FAILED to connect to server (%s)\n", bleRemoteServer->getName().c_str());
+        showGameScreen = true;  // If connection fails, still show the game screen
         return false;
     }
+    
     Serial.printf("Connected to server (%s)\n", bleRemoteServer->getName().c_str());
 
     BLERemoteService *bleRemoteService = bleClient->getService(SERVICE_UUID);
     if (bleRemoteService == nullptr) {
         Serial.printf("Failed to find our service UUID: %s\n", SERVICE_UUID.toString().c_str());
         bleClient->disconnect();
+        showGameScreen = true;
         return false;
     }
+    
     Serial.printf("Found our service UUID: %s\n", SERVICE_UUID.toString().c_str());
 
     bleRemoteCharacteristic = bleRemoteService->getCharacteristic(CHARACTERISTIC_UUID);
     if (bleRemoteCharacteristic == nullptr) {
         Serial.printf("Failed to find our characteristic UUID: %s\n", CHARACTERISTIC_UUID.toString().c_str());
         bleClient->disconnect();
+        showGameScreen = true;
         return false;
     }
+    
     Serial.printf("Found our characteristic UUID: %s\n", CHARACTERISTIC_UUID.toString().c_str());
-
-    if (bleRemoteCharacteristic->canRead()) {
-        std::string value = bleRemoteCharacteristic->readValue();
-        Serial.printf("The characteristic value was: %s\n", value.c_str());
-    }
 
     if (bleRemoteCharacteristic->canNotify())
         bleRemoteCharacteristic->registerForNotify(notifyCallback);
 
+    showGameScreen = true; // After successful connection, show game screen
     return true;
 }
 
@@ -150,17 +154,17 @@ void loop() {
     if (doConnect) {
         if (connectToServer()) {
             Serial.println("Connected to BLE Server.");
-            drawScreenTextWithBackground("Connected to BLE server: " + String(bleRemoteServer->getName().c_str()), TFT_GREEN);
+            drawScreenTextWithBackground("Connected to BLE server!", TFT_GREEN);
             doConnect = false;
-            delay(3000);
+            delay(1000);
         } else {
             Serial.println("Failed to connect to server.");
             drawScreenTextWithBackground("FAILED to connect to BLE server.", TFT_RED);
-            delay(3000);
+            delay(1000);
         }
     }
 
-    if (deviceConnected) {
+    if (deviceConnected || showGameScreen) {
         sendGamepadData();
     } else if (doScan) {
         drawScreenTextWithBackground("Disconnected... re-scanning for BLE server...", TFT_ORANGE);
@@ -199,6 +203,9 @@ void sendGamepadData() {
 
     blueX = constrain(blueX, 0, 315);
     blueY = constrain(blueY, 0, 235);
+
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.fillRect(blueX, blueY, 5, 5, BLUE);
 
     String position = String(blueX) + "-" + String(blueY);
     bleRemoteCharacteristic->writeValue(position.c_str(), position.length());
