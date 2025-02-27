@@ -24,7 +24,7 @@ int timer = 0;
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 // BLE Broadcast Name
-static String BLE_BROADCAST_NAME = "Grissoms M5Core2024";
+static String BLE_BROADCAST_NAME = "Mckaylas M5Core2024";
 
 ///////////////////////////////////////////////////////////////
 // BLE Server Callback Methods

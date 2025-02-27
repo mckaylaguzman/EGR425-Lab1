@@ -21,7 +21,7 @@ static BLEUUID SERVICE_UUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b"); // Dr. Dan'
 static BLEUUID CHARACTERISTIC_UUID("beb5483e-36e1-4688-b7f5-ea07361b26a8"); // Dr. Dan's Characteristic
 
 // BLE Broadcast Name
-static String BLE_BROADCAST_NAME = "Grissoms M5Core2024";
+static String BLE_BROADCAST_NAME = "Mckaylas M5Core2024";
 
 ///////////////////////////////////////////////////////////////
 // Forward Declarations
