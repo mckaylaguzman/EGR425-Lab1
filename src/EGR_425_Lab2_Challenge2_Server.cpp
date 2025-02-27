@@ -1,145 +1,148 @@
-#include <M5Core2.h>
-#include <Adafruit_seesaw.h>
+// Some useful resources on BLE and ESP32:
+//      https://github.com/nkolban/ESP32_BLE_Arduino/blob/master/examples/BLE_notify/BLE_notify.ino
+//      https://microcontrollerslab.com/esp32-bluetooth-low-energy-ble-using-arduino-ide/
+//      https://randomnerdtutorials.com/esp32-bluetooth-low-energy-ble-arduino-ide/
+//      https://www.electronicshub.org/esp32-ble-tutorial/
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
+#include <M5Core2.h>
 
-// BLE Definitions
-#define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
-// BLE Variables
+///////////////////////////////////////////////////////////////
+// Variables
+///////////////////////////////////////////////////////////////
 BLEServer *bleServer;
 BLEService *bleService;
 BLECharacteristic *bleCharacteristic;
 bool deviceConnected = false;
+bool previouslyConnected = false;
+int timer = 0;
 
-// Gamepad Variables
-Adafruit_seesaw gamepad;
-#define BUTTON_START 16
-#define BUTTON_SELECT 0
+// See the following for generating UUIDs: https://www.uuidgenerator.net/
+#define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
-int blueX = 150, blueY = 100, blueSpeed = 2;  // Server's dot (local)
-int redX = 0, redY = 0;  // Client's dot (received via BLE)
+// BLE Broadcast Name
+static String BLE_BROADCAST_NAME = "Grissoms M5Core2024";
 
-// Display feedback function
-void drawScreenTextWithBackground(String text, int backgroundColor) {
-  M5.Lcd.fillScreen(backgroundColor);
-  M5.Lcd.setCursor(0, 0);
-  M5.Lcd.println(text);
-}
-
-// BLE Server Callbacks
-class MyServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer *pServer) {
-    deviceConnected = true;
-    Serial.println("Device connected...");
-    drawScreenTextWithBackground("Device connected!", TFT_GREEN);
-  }
-  void onDisconnect(BLEServer *pServer) {
-    deviceConnected = false;
-    Serial.println("Device disconnected...");
-    drawScreenTextWithBackground("Disconnected.\nWaiting for client...", TFT_RED);
-  }
+///////////////////////////////////////////////////////////////
+// BLE Server Callback Methods
+///////////////////////////////////////////////////////////////
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer *pServer) {
+        deviceConnected = true;
+        previouslyConnected = true;
+        Serial.println("Device connected...");
+    }
+    void onDisconnect(BLEServer *pServer) {
+        deviceConnected = false;
+        Serial.println("Device disconnected...");
+    }
 };
 
-// Initialize BLE
-void initializeBLE() {
-  Serial.println("Starting BLE...");
-  drawScreenTextWithBackground("Initializing BLE...", TFT_CYAN);
-  BLEDevice::init("M5Core2 Gamepad Server");
+///////////////////////////////////////////////////////////////
+// Forward Declarations
+///////////////////////////////////////////////////////////////
+void broadcastBleServer();
+void drawScreenTextWithBackground(String text, int backgroundColor);
 
-  bleServer = BLEDevice::createServer();
-  bleServer->setCallbacks(new MyServerCallbacks());
+///////////////////////////////////////////////////////////////
+// Put your setup code here, to run once
+///////////////////////////////////////////////////////////////
+void setup()
+{
+    // Init device
+    M5.begin();
+    M5.Lcd.setTextSize(3);
 
-  bleService = bleServer->createService(SERVICE_UUID);
-  bleCharacteristic = bleService->createCharacteristic(
-      CHARACTERISTIC_UUID,
-      BLECharacteristic::PROPERTY_READ |
-      BLECharacteristic::PROPERTY_WRITE |
-      BLECharacteristic::PROPERTY_NOTIFY
-  );
-  bleCharacteristic->addDescriptor(new BLE2902());
-  bleCharacteristic->setValue("Hello BLE World!");
+    // Initialize M5Core2 as a BLE server
+    Serial.print("Starting BLE...");
+    BLEDevice::init(BLE_BROADCAST_NAME.c_str());
 
-  bleService->start();
-  BLEAdvertising *bleAdvertising = BLEDevice::getAdvertising();
-  bleAdvertising->addServiceUUID(SERVICE_UUID);
-  BLEDevice::startAdvertising();
-
-  Serial.println("BLE Server broadcasting...");
-  drawScreenTextWithBackground("Broadcasting BLE Server...", TFT_BLUE);
+    // Broadcast the BLE server
+    drawScreenTextWithBackground("Initializing BLE...", TFT_CYAN);
+    broadcastBleServer();
+    drawScreenTextWithBackground("Broadcasting as BLE server named:\n\n" + BLE_BROADCAST_NAME, TFT_BLUE);
 }
 
-// Initialize gamepad hardware
-void initializeGamepad() {
-  if (!gamepad.begin(0x50)) {
-    Serial.println("ERROR! Gamepad not found.");
-    drawScreenTextWithBackground("ERROR!\nGamepad not found.", TFT_RED);
-    while (1);
-  }
-  gamepad.pinMode(BUTTON_START, INPUT_PULLUP);
-  gamepad.pinMode(BUTTON_SELECT, INPUT_PULLUP);
-}
+///////////////////////////////////////////////////////////////
+// Put your main code here, to run repeatedly
+///////////////////////////////////////////////////////////////
+void loop()
+{
+    if (deviceConnected) {
+        // 1 - Update the characteristic's value  (which can be read by a client) and NOTIFY any clients listening
+        // timer++;
+        // bleCharacteristic->setValue(timer);
+        // bleCharacteristic->notify();
+        // Serial.printf("%d written to BLE characteristic.\n", timer);
+        // drawScreenTextWithBackground(String(timer) + " written to BLE characteristic", TFT_GREEN);
 
-void setup() {
-  M5.begin();
-  M5.Lcd.fillScreen(BLACK);
-  Serial.begin(115200);
+        // 2 - Read the characteristic's value as a string (which can be written from a client)
+        std::string readValue = bleCharacteristic->getValue();
+        Serial.printf("The new characteristic value as a STRING is: %s\n", readValue.c_str());
+        String str = readValue.c_str();
+        drawScreenTextWithBackground("Read from BLE client:\n\n" + str, TFT_GREEN);
 
-  initializeBLE();
-  initializeGamepad();
-}
+        // 3 - Read the characteristic's value as an int (which can be written from a client)
+        // std::string readValue = bleCharacteristic->getValue();
+        // Serial.printf("The new characteristic value as a STRING is: %s\n", readValue.c_str());
+        // String valStr = readValue.c_str();
+        // int val = valStr.toInt();
+        // Serial.printf("The new characteristic value as an INT is: %d\n", val);
+        // drawScreenTextWithBackground(String(val) + " read from BLE characteristic", TFT_GREEN);
 
-void loop() {
-  uint32_t buttons = gamepad.digitalReadBulk(0xFFFF);
+        // 4 - Read the characteristic's value as a BYTE (which can be written from a client)
+        // uint8_t *numPtr = new uint8_t();
+        // numPtr = bleCharacteristic->getData();
+        // Serial.printf("The new characteristic value as a BYTE is: %d\n", *numPtr);
+        // drawScreenTextWithBackground(String(*numPtr) + " read from BLE characteristic", TFT_GREEN);
 
-  // Read joystick movement
-  int joyX = 1023 - gamepad.analogRead(14);
-  int joyY = 1023 - gamepad.analogRead(15);
-  float normX = (joyX - 512) / 512.0;
-  float normY = (joyY - 512) / 512.0;
 
-  // Move Blue Dot Based on Speed
-  if (abs(normX) > 0.2) blueX += (normX > 0 ? blueSpeed : -blueSpeed);
-  if (abs(normY) > 0.2) blueY -= (normY > 0 ? blueSpeed : -blueSpeed);
-
-  // Start Button: Adjust Speed (1 to 5)
-  if (!(buttons & (1UL << BUTTON_START))) {
-    blueSpeed = (blueSpeed % 5) + 1;
-    Serial.printf("Speed changed to: %d\n", blueSpeed);
-    delay(300);
-  }
-
-  // Select Button: Warp to Random Location
-  if (!(buttons & (1UL << BUTTON_SELECT))) {
-    blueX = random(0, 315);
-    blueY = random(0, 235);
-    Serial.printf("Warped to: (%d, %d)\n", blueX, blueY);
-    delay(300);
-  }
-
-  // Receive client dot position
-  if (deviceConnected) {
-    std::string receivedData = bleCharacteristic->getValue();
-    int separatorIndex = receivedData.find('-');
-    if (separatorIndex != std::string::npos) {
-      redX = std::stoi(receivedData.substr(0, separatorIndex));
-      redY = std::stoi(receivedData.substr(separatorIndex + 1));
+    } else if (previouslyConnected) {
+        drawScreenTextWithBackground("Disconnected. Reset M5 device to reinitialize BLE.", TFT_RED); // Give feedback on screen
+        timer = 0;
     }
-  }
+    
+    // Only update the timer (if connected) every 1 second
+    delay(1000);
+}
 
-  // Display Local Blue Dot and Remote Red Dot
-  M5.Lcd.fillScreen(BLACK);
-  M5.Lcd.fillRect(blueX, blueY, 5, 5, BLUE);  // Local dot
-  M5.Lcd.fillRect(redX, redY, 5, 5, RED);    // Client dot
+///////////////////////////////////////////////////////////////
+// Colors the background and then writes the text on top
+///////////////////////////////////////////////////////////////
+void drawScreenTextWithBackground(String text, int backgroundColor) {
+    M5.Lcd.fillScreen(backgroundColor);
+    M5.Lcd.setCursor(0,0);
+    M5.Lcd.println(text);
+}
 
-  // Send local position to client
-  if (deviceConnected) {
-    String position = String(blueX) + "-" + String(blueY);
-    bleCharacteristic->setValue(position.c_str());
-    bleCharacteristic->notify();
-  }
+///////////////////////////////////////////////////////////////
+// This code creates the BLE server and broadcasts it
+///////////////////////////////////////////////////////////////
+void broadcastBleServer() {    
+    // Initializing the server, a service and a characteristic 
+    bleServer = BLEDevice::createServer();
+    bleServer->setCallbacks(new MyServerCallbacks());
+    bleService = bleServer->createService(SERVICE_UUID);
+    bleCharacteristic = bleService->createCharacteristic(CHARACTERISTIC_UUID,
+        BLECharacteristic::PROPERTY_READ |
+        BLECharacteristic::PROPERTY_WRITE |
+        BLECharacteristic::PROPERTY_NOTIFY |
+        BLECharacteristic::PROPERTY_INDICATE
+    );
+    bleCharacteristic->setValue("Hello BLE World from Dr. Dan!");
+    bleService->start();
 
-  delay(50);
+    // Start broadcasting (advertising) BLE service
+    BLEAdvertising *bleAdvertising = BLEDevice::getAdvertising();
+    bleAdvertising->addServiceUUID(SERVICE_UUID);
+    bleAdvertising->setScanResponse(true);
+    bleAdvertising->setMinPreferred(0x12); // Use this value most of the time 
+    // bleAdvertising->setMinPreferred(0x06); // Functions that help w/ iPhone connection issues 
+    // bleAdvertising->setMinPreferred(0x00); // Set value to 0x00 to not advertise this parameter
+    BLEDevice::startAdvertising();
+    Serial.println("Characteristic defined...you can connect with your phone!"); 
+
 }
