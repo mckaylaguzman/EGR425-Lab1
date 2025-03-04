@@ -11,14 +11,19 @@ static BLEAdvertisedDevice *bleRemoteServer;
 static boolean doConnect = false;
 static boolean doScan = false;
 bool deviceConnected = false;
+bool gameOverFlag = false;  // Flag to track if the game is over
 
 // Gamepad Variables
 Adafruit_seesaw gamepad;
 #define BUTTON_START 16
 #define BUTTON_SELECT 0
-int blueX = 150, blueY = 100, blueSpeed = 1;
+
+// Ensure the blue dot (client) starts at a different random position
+int blueX, blueY, blueSpeed = 1;
 bool showGameScreen = false;  // Flag to control screen transition
-int lastReceivedRedX = 150, lastReceivedRedY = 100; // Default position for red dot
+int lastReceivedRedX = -1, lastReceivedRedY = -1;  // Red dot starts as invalid
+
+const int COLLISION_DISTANCE = 10;  // Collision threshold
 
 ///////////////////////////////////////////////////////////////
 // BLE UUIDs
@@ -34,6 +39,7 @@ static String BLE_BROADCAST_NAME = "Mckaylas M5Core2024";
 ///////////////////////////////////////////////////////////////
 void drawScreenTextWithBackground(String text, int backgroundColor);
 void sendGamepadData();
+void gameOver();  // Game Over function
 
 ///////////////////////////////////////////////////////////////
 // BLE Client Callback Methods (Handles Server Notifications)
@@ -55,8 +61,17 @@ static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, ui
             lastReceivedRedY = receivedData.substring(commaIndex + 1).toInt();
         }
     }
-}
 
+    // Avoid triggering game over if the red dot hasn't been updated yet
+    if (lastReceivedRedX == -1 || lastReceivedRedY == -1) return;
+
+    // Check for collision
+    int dx = abs(blueX - lastReceivedRedX);
+    int dy = abs(blueY - lastReceivedRedY);
+    if (dx < COLLISION_DISTANCE && dy < COLLISION_DISTANCE) {
+        gameOver();
+    }
+}
 
 ///////////////////////////////////////////////////////////////
 // BLE Server Callback Methods (Handles Connection/Disconnection)
@@ -84,7 +99,7 @@ bool connectToServer() {
 
     if (!bleClient->connect(bleRemoteServer)) {
         Serial.printf("FAILED to connect to server (%s)\n", bleRemoteServer->getName().c_str());
-        showGameScreen = true;  // If connection fails, still show the game screen
+        showGameScreen = true;
         return false;
     }
     
@@ -97,7 +112,7 @@ bool connectToServer() {
         showGameScreen = true;
         return false;
     }
-    
+
     Serial.printf("Found our service UUID: %s\n", SERVICE_UUID.toString().c_str());
 
     bleRemoteCharacteristic = bleRemoteService->getCharacteristic(CHARACTERISTIC_UUID);
@@ -107,13 +122,13 @@ bool connectToServer() {
         showGameScreen = true;
         return false;
     }
-    
+
     Serial.printf("Found our characteristic UUID: %s\n", CHARACTERISTIC_UUID.toString().c_str());
 
     if (bleRemoteCharacteristic->canNotify())
         bleRemoteCharacteristic->registerForNotify(notifyCallback);
 
-    showGameScreen = true; // After successful connection, show game screen
+    showGameScreen = true;
     return true;
 }
 
@@ -134,8 +149,8 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
             doConnect = true;
             doScan = true;
         }
-    }     
-};        
+    }
+};
 
 ///////////////////////////////////////////////////////////////
 // Setup Function
@@ -144,6 +159,10 @@ void setup() {
     M5.begin();
     M5.Lcd.setTextSize(3);
     drawScreenTextWithBackground("Scanning for BLE server...", TFT_BLUE);
+
+    // Assign random positions for the blue dot
+    blueX = random(50, 250);
+    blueY = random(50, 200);
 
     BLEDevice::init("");
 
@@ -167,6 +186,8 @@ void setup() {
 // Main Loop
 ///////////////////////////////////////////////////////////////
 void loop() {
+    if (gameOverFlag) return; // Stop the game loop if game over
+
     if (doConnect) {
         if (connectToServer()) {
             Serial.println("Connected to BLE Server.");
@@ -187,13 +208,15 @@ void loop() {
         BLEDevice::getScan()->start(0);
     }
 
-    delay(50); // Smooth refresh
+    delay(50);
 }
 
 ///////////////////////////////////////////////////////////////
 // Send Gamepad Data to BLE Server
 ///////////////////////////////////////////////////////////////
 void sendGamepadData() {
+    if (gameOverFlag) return;
+
     uint32_t buttons = gamepad.digitalReadBulk(0xFFFF);
     int joyX = 1023 - gamepad.analogRead(14);
     int joyY = 1023 - gamepad.analogRead(15);
@@ -204,36 +227,31 @@ void sendGamepadData() {
     if (abs(normX) > 0.2) blueX += (normX > 0 ? blueSpeed : -blueSpeed);
     if (abs(normY) > 0.2) blueY -= (normY > 0 ? blueSpeed : -blueSpeed);
 
-    if (!(buttons & (1UL << BUTTON_START))) {
-        blueSpeed = (blueSpeed % 5) + 1;
-        Serial.printf("Speed changed to: %d\n", blueSpeed);
-        delay(300);
-    }
-
-    if (!(buttons & (1UL << BUTTON_SELECT))) {
-        blueX = random(0, 315);
-        blueY = random(0, 235);
-        Serial.printf("Warped to: (%d, %d)\n", blueX, blueY);
-        delay(300);
-    }
-
     blueX = constrain(blueX, 0, 315);
     blueY = constrain(blueY, 0, 235);
 
-    // Draw both dots
     M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.fillRect(blueX, blueY, 5, 5, BLUE);  // Local Blue Dot
-    M5.Lcd.fillRect(lastReceivedRedX, lastReceivedRedY, 5, 5, RED);  // Opponent's Red Dot
+    M5.Lcd.fillRect(blueX, blueY, 5, 5, BLUE);
+    M5.Lcd.fillRect(lastReceivedRedX, lastReceivedRedY, 5, 5, RED);
 
-    // Send blue dot position to the server
     String position = String(blueX) + "-" + String(blueY);
     bleRemoteCharacteristic->writeValue(position.c_str(), position.length());
-    Serial.printf("Sent position: %s\n", position.c_str());
 }
 
 ///////////////////////////////////////////////////////////////
-// Screen Helper Function
+// Game Over Function
 ///////////////////////////////////////////////////////////////
+void gameOver() {
+    gameOverFlag = true;
+    M5.Lcd.fillScreen(RED);
+    M5.Lcd.setTextColor(WHITE);
+    M5.Lcd.setCursor(50, 100);
+    M5.Lcd.setTextSize(3);
+    M5.Lcd.print("GAME OVER");
+
+    while (1);
+}
+
 void drawScreenTextWithBackground(String text, int backgroundColor) {
     M5.Lcd.fillScreen(backgroundColor);
     M5.Lcd.setCursor(0, 0);

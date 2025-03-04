@@ -105,7 +105,6 @@ void loop() {
         dotX = constrain(dotX, 0, 315);
         dotY = constrain(dotY, 0, 235);
 
-        // ✅ Read opponent's position from BLE
         std::string readValue = bleCharacteristic->getValue();
         if (!readValue.empty() && readValue.find('-') != std::string::npos) {
             int commaIndex = String(readValue.c_str()).indexOf('-');
@@ -113,7 +112,6 @@ void loop() {
                 int tempRedX = String(readValue.c_str()).substring(0, commaIndex).toInt();
                 int tempRedY = String(readValue.c_str()).substring(commaIndex + 1).toInt();
 
-                // ✅ FIX: Ensure red dot is NOT mistakenly set to our own blue dot position
                 if (!(tempRedX == dotX && tempRedY == dotY)) {  
                     redX = tempRedX;
                     redY = tempRedY;
