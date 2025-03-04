@@ -42,7 +42,12 @@ static String BLE_BROADCAST_NAME = "Mckaylas M5Core2024";
 // Function Declarations
 ///////////////////////////////////////////////////////////////
 void broadcastBleServer();
-void drawScreenTextWithBackground(String text, int backgroundColor);
+void drawScreenTextWithBackground(String text, int backgroundColor) {
+    M5.Lcd.fillScreen(backgroundColor);
+    M5.Lcd.setCursor(10, 50);
+    M5.Lcd.setTextColor(WHITE);
+    M5.Lcd.println(text);
+}
 
 ///////////////////////////////////////////////////////////////
 // BLE Server Callbacks
