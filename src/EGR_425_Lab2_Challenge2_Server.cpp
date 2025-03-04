@@ -2,6 +2,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
+#include <Adafruit_seesaw.h>
 
 ///////////////////////////////////////////////////////////////
 // Variables
@@ -14,9 +15,17 @@ bool previouslyConnected = false;
 int timer = 0;
 bool showMessage = true;  // Flag to show BLE message before switching to dot display
 
+// Gamepad Variables
+Adafruit_seesaw gamepad;
+#define BUTTON_START 16
+#define BUTTON_SELECT 0
+
 // Dot position variables
 int dotX = 150, dotY = 100;
 int dotSpeed = 1;
+
+// Opponent's Red Dot Position
+int redX = 150, redY = 100;  // Default starting position
 
 ///////////////////////////////////////////////////////////////
 // BLE UUIDs
@@ -70,6 +79,15 @@ void setup() {
     drawScreenTextWithBackground("Initializing BLE...", TFT_CYAN);
     broadcastBleServer();
     drawScreenTextWithBackground("Broadcasting as BLE server named:\n\n" + BLE_BROADCAST_NAME, TFT_BLUE);
+
+    // Initialize Gamepad
+    if (!gamepad.begin(0x50)) {
+        Serial.println("ERROR Gamepad not found");
+        while (1);
+    }
+
+    gamepad.pinMode(BUTTON_START, INPUT_PULLUP);
+    gamepad.pinMode(BUTTON_SELECT, INPUT_PULLUP);
 }
 
 ///////////////////////////////////////////////////////////////
@@ -80,26 +98,42 @@ void loop() {
         std::string readValue = bleCharacteristic->getValue();
         Serial.printf("The new characteristic value as a STRING is: %s\n", readValue.c_str());
 
-        int commaIndex = String(readValue.c_str()).indexOf('-');
-        if (commaIndex > 0) {
-            redX = String(readValue.c_str()).substring(0, commaIndex).toInt();
-            redY = String(readValue.c_str()).substring(commaIndex + 1).toInt();
+        // Only update red dot if we actually received data
+        if (!readValue.empty()) {
+            int commaIndex = String(readValue.c_str()).indexOf('-');
+            if (commaIndex > 0) {
+                redX = String(readValue.c_str()).substring(0, commaIndex).toInt();
+                redY = String(readValue.c_str()).substring(commaIndex + 1).toInt();
+            }
         }
+
+        // Read joystick input
+        uint32_t buttons = gamepad.digitalReadBulk(0xFFFF);
+        int joyX = 1023 - gamepad.analogRead(14);
+        int joyY = 1023 - gamepad.analogRead(15);
+
+        float normX = (joyX - 512) / 512.0;
+        float normY = (joyY - 512) / 512.0;
+
+        if (abs(normX) > 0.2) dotX += (normX > 0 ? dotSpeed : -dotSpeed);
+        if (abs(normY) > 0.2) dotY -= (normY > 0 ? dotSpeed : -dotSpeed);
+
+        dotX = constrain(dotX, 0, 315);
+        dotY = constrain(dotY, 0, 235);
 
         // Draw both dots
         M5.Lcd.fillScreen(BLACK);
         M5.Lcd.fillRect(dotX, dotY, 5, 5, BLUE); // Local Blue Dot
         M5.Lcd.fillRect(redX, redY, 5, 5, RED);  // Opponent's Red Dot
 
-        // Send server position back to the client
+        // Send position to client
         String positionUpdate = String(dotX) + "-" + String(dotY);
         bleCharacteristic->setValue(positionUpdate.c_str());
-        bleCharacteristic->notify();  // <---- Make sure to notify the client
+        bleCharacteristic->notify();
     }
 
-    delay(50);  // Adjust refresh rate for smooth transitions
+    delay(50); // Smooth update rate
 }
-
 
 ///////////////////////////////////////////////////////////////
 // Colors the background and then writes the text on top

@@ -228,7 +228,6 @@ void sendGamepadData() {
     // Send blue dot position to the server
     String position = String(blueX) + "-" + String(blueY);
     bleRemoteCharacteristic->writeValue(position.c_str(), position.length());
-    Serial.printf("Sent position: %s\n", position.c_str());
 }
 
 ///////////////////////////////////////////////////////////////
