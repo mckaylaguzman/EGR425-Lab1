@@ -10,7 +10,6 @@
 BLEServer *bleServer;
 BLEService *bleService;
 BLECharacteristic *bleCharacteristic;
-BLECharacteristic *clientPositionCharacteristic;
 bool deviceConnected = false;
 bool previouslyConnected = false;
 bool showMessage = true;  // Show connection message first
@@ -20,45 +19,40 @@ Adafruit_seesaw gamepad;
 #define BUTTON_START 16
 #define BUTTON_SELECT 0
 
-// Server's Blue Dot
+// Server's Blue Dot (Local)
 int dotX = 150, dotY = 100;
 int dotSpeed = 1;
 
 // Opponent's Red Dot (Client-controlled)
-int redX = -1, redY = -1;  
-unsigned long startTime, gameTime;
-bool gameOver = false;
+int redX = -1, redY = -1;  // Start with invalid values
+int lastReceivedRedX = -1, lastReceivedRedY = -1;  // Track last position
 
 ///////////////////////////////////////////////////////////////
 // BLE UUIDs
 ///////////////////////////////////////////////////////////////
 #define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define CLIENT_POSITION_UUID "7b1c5f64-2d3c-4d91-8ea7-bb643b7c5a1f" // Client writes its position here
 
+// BLE Broadcast Name
 static String BLE_BROADCAST_NAME = "Mckaylas M5Core2024";
 
 ///////////////////////////////////////////////////////////////
 // Function Declarations
 ///////////////////////////////////////////////////////////////
 void broadcastBleServer();
-void drawScreenTextWithBackground(String text, int backgroundColor) {
-    M5.Lcd.fillScreen(backgroundColor);
-    M5.Lcd.setCursor(10, 50);
-    M5.Lcd.setTextColor(WHITE);
-    M5.Lcd.println(text);
-}
+void drawScreenTextWithBackground(String text, int backgroundColor);
 
 ///////////////////////////////////////////////////////////////
-// BLE Server Callbacks
+// BLE Server Callback Methods
 ///////////////////////////////////////////////////////////////
-class MyServerCallbacks : public BLEServerCallbacks {
+class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer *pServer) {
         deviceConnected = true;
         previouslyConnected = true;
-        showMessage = true;
+        showMessage = true;  // Reset flag to show the message when connecting
         Serial.println("Device connected...");
-        startTime = millis(); // Start timer
+
+        // Notify client to transition to game screen
         bleCharacteristic->setValue("CONNECTED");
         bleCharacteristic->notify();
     }
@@ -66,23 +60,6 @@ class MyServerCallbacks : public BLEServerCallbacks {
     void onDisconnect(BLEServer *pServer) {
         deviceConnected = false;
         Serial.println("Device disconnected...");
-    }
-};
-
-// BLE Characteristic Callback for receiving Client's dot position
-class MyCharacteristicCallbacks : public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic* pCharacteristic) {
-        std::string value = pCharacteristic->getValue();
-        if (value.empty()) return;
-
-        int separatorIndex = value.find('-');
-        if (separatorIndex != std::string::npos) {
-            int tempRedX = atoi(value.substr(0, separatorIndex).c_str());
-            int tempRedY = atoi(value.substr(separatorIndex + 1).c_str());
-
-            redX = constrain(tempRedX, 0, 315);
-            redY = constrain(tempRedY, 0, 235);
-        }
     }
 };
 
@@ -98,8 +75,9 @@ void setup() {
     BLEDevice::init(BLE_BROADCAST_NAME.c_str());
 
     broadcastBleServer();
-    drawScreenTextWithBackground("Broadcasting BLE server:\n\n" + BLE_BROADCAST_NAME, TFT_BLUE);
+    drawScreenTextWithBackground("Broadcasting as BLE server:\n\n" + BLE_BROADCAST_NAME, TFT_BLUE);
 
+    // Initialize Gamepad
     if (!gamepad.begin(0x50)) {
         Serial.println("ERROR: Gamepad not found");
         while (1);
@@ -112,8 +90,9 @@ void setup() {
 // Main Loop
 ///////////////////////////////////////////////////////////////
 void loop() {
-    if (deviceConnected && !gameOver) {
+    if (deviceConnected) {
         // Read joystick input for the server's movement
+        uint32_t buttons = gamepad.digitalReadBulk(0xFFFF);
         int joyX = 1023 - gamepad.analogRead(14);
         int joyY = 1023 - gamepad.analogRead(15);
 
@@ -126,49 +105,71 @@ void loop() {
         dotX = constrain(dotX, 0, 315);
         dotY = constrain(dotY, 0, 235);
 
-        // Update Client with Server's position
+        // ✅ Read opponent's position from BLE
+        std::string readValue = bleCharacteristic->getValue();
+        if (!readValue.empty() && readValue.find('-') != std::string::npos) {
+            int commaIndex = String(readValue.c_str()).indexOf('-');
+            if (commaIndex > 0) {
+                int tempRedX = String(readValue.c_str()).substring(0, commaIndex).toInt();
+                int tempRedY = String(readValue.c_str()).substring(commaIndex + 1).toInt();
+
+                // ✅ FIX: Ensure red dot is NOT mistakenly set to our own blue dot position
+                if (!(tempRedX == dotX && tempRedY == dotY)) {  
+                    redX = tempRedX;
+                    redY = tempRedY;
+                }
+            }
+        }
+        redX = constrain(redX, 0, 315);
+        redY = constrain(redY, 0, 235);
+
+        M5.Lcd.fillScreen(BLACK);
+        M5.Lcd.fillRect(dotX, dotY, 5, 5, BLUE); // Local Server Blue Dot
+        M5.Lcd.fillRect(redX, redY, 5, 5, RED);  // Opponent's Red Dot
+
         String positionUpdate = String(dotX) + "-" + String(dotY);
         bleCharacteristic->setValue(positionUpdate.c_str());
         bleCharacteristic->notify();
-
-        // Draw both dots
-        M5.Lcd.fillScreen(BLACK);
-        M5.Lcd.fillRect(dotX, dotY, 5, 5, BLUE);
-        M5.Lcd.fillRect(redX, redY, 5, 5, RED);
-
-        // Check for collision
-        if (abs(dotX - redX) < 5 && abs(dotY - redY) < 5) {
-            gameOver = true;
-            gameTime = (millis() - startTime) / 1000;
-            drawScreenTextWithBackground("Game Over!\nTime: " + String(gameTime) + "s", TFT_RED);
-        }
+    } else if (previouslyConnected) {
+        drawScreenTextWithBackground("Disconnected. Restart M5 to reconnect.", TFT_RED);
     }
-    delay(30);
+
+    delay(30); // Smooth movement update rate
 }
 
+
+
+
 ///////////////////////////////////////////////////////////////
-// BLE Server Setup
+// BLE Server Broadcast Function
 ///////////////////////////////////////////////////////////////
 void broadcastBleServer() {    
     bleServer = BLEDevice::createServer();
     bleServer->setCallbacks(new MyServerCallbacks());
-
     bleService = bleServer->createService(SERVICE_UUID);
-    
-    // Server's dot position characteristic
     bleCharacteristic = bleService->createCharacteristic(
-        CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+        CHARACTERISTIC_UUID,
+        BLECharacteristic::PROPERTY_READ |
+        BLECharacteristic::PROPERTY_WRITE |
+        BLECharacteristic::PROPERTY_NOTIFY |
+        BLECharacteristic::PROPERTY_INDICATE
     );
-
-    // Client's dot position characteristic
-    clientPositionCharacteristic = bleService->createCharacteristic(
-        CLIENT_POSITION_UUID, BLECharacteristic::PROPERTY_WRITE
-    );
-
-    clientPositionCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
-
+    bleCharacteristic->setValue("Hello BLE World!");
     bleService->start();
+
     BLEAdvertising *bleAdvertising = BLEDevice::getAdvertising();
     bleAdvertising->addServiceUUID(SERVICE_UUID);
+    bleAdvertising->setScanResponse(true);
+    bleAdvertising->setMinPreferred(0x12);
     BLEDevice::startAdvertising();
+    Serial.println("Characteristic defined... You can connect now!");
+}
+
+///////////////////////////////////////////////////////////////
+// Screen Display Function
+///////////////////////////////////////////////////////////////
+void drawScreenTextWithBackground(String text, int backgroundColor) {
+    M5.Lcd.fillScreen(backgroundColor);
+    M5.Lcd.setCursor(0, 0);
+    M5.Lcd.println(text);
 }

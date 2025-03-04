@@ -39,14 +39,24 @@ void sendGamepadData();
 // BLE Client Callback Methods (Handles Server Notifications)
 ///////////////////////////////////////////////////////////////
 static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
+    Serial.printf("Notify callback for characteristic %s of data length %d\n", 
+                  pBLERemoteCharacteristic->getUUID().toString().c_str(), length);
+    Serial.printf("\tData: %s\n", (char *)pData);
+
     String receivedData = String((char *)pData);
-    int separatorIndex = receivedData.indexOf('-');
-    
-    if (separatorIndex > 0) {
-        lastReceivedRedX = receivedData.substring(0, separatorIndex).toInt();
-        lastReceivedRedY = receivedData.substring(separatorIndex + 1).toInt();
+
+    if (receivedData == "CONNECTED") {
+        showGameScreen = true;
+        Serial.println("Switching to game screen.");
+    } else {
+        int commaIndex = receivedData.indexOf('-');
+        if (commaIndex > 0) {
+            lastReceivedRedX = receivedData.substring(0, commaIndex).toInt();
+            lastReceivedRedY = receivedData.substring(commaIndex + 1).toInt();
+        }
     }
 }
+
 
 ///////////////////////////////////////////////////////////////
 // BLE Server Callback Methods (Handles Connection/Disconnection)
