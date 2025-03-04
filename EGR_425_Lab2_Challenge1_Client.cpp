@@ -18,6 +18,7 @@ Adafruit_seesaw gamepad;
 #define BUTTON_SELECT 0
 int blueX = 150, blueY = 100, blueSpeed = 1;
 bool showGameScreen = false;  // Flag to control screen transition
+int lastReceivedRedX = 150, lastReceivedRedY = 100; // Default position for red dot
 
 ///////////////////////////////////////////////////////////////
 // BLE UUIDs
@@ -38,9 +39,24 @@ void sendGamepadData();
 // BLE Client Callback Methods (Handles Server Notifications)
 ///////////////////////////////////////////////////////////////
 static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
-    Serial.printf("Notify callback for characteristic %s of data length %d\n", pBLERemoteCharacteristic->getUUID().toString().c_str(), length);
+    Serial.printf("Notify callback for characteristic %s of data length %d\n", 
+                  pBLERemoteCharacteristic->getUUID().toString().c_str(), length);
     Serial.printf("\tData: %s\n", (char *)pData);
+
+    String receivedData = String((char *)pData);
+
+    if (receivedData == "CONNECTED") {
+        showGameScreen = true;
+        Serial.println("Switching to game screen.");
+    } else {
+        int commaIndex = receivedData.indexOf('-');
+        if (commaIndex > 0) {
+            lastReceivedRedX = receivedData.substring(0, commaIndex).toInt();
+            lastReceivedRedY = receivedData.substring(commaIndex + 1).toInt();
+        }
+    }
 }
+
 
 ///////////////////////////////////////////////////////////////
 // BLE Server Callback Methods (Handles Connection/Disconnection)
@@ -204,9 +220,12 @@ void sendGamepadData() {
     blueX = constrain(blueX, 0, 315);
     blueY = constrain(blueY, 0, 235);
 
+    // Draw both dots
     M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.fillRect(blueX, blueY, 5, 5, BLUE);
+    M5.Lcd.fillRect(blueX, blueY, 5, 5, BLUE);  // Local Blue Dot
+    M5.Lcd.fillRect(lastReceivedRedX, lastReceivedRedY, 5, 5, RED);  // Opponent's Red Dot
 
+    // Send blue dot position to the server
     String position = String(blueX) + "-" + String(blueY);
     bleRemoteCharacteristic->writeValue(position.c_str(), position.length());
     Serial.printf("Sent position: %s\n", position.c_str());

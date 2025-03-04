@@ -36,7 +36,12 @@ class MyServerCallbacks: public BLEServerCallbacks {
         previouslyConnected = true;
         showMessage = true;  // Reset flag when a new client connects
         Serial.println("Device connected...");
+
+        // Send initial signal to client to transition to game screen
+        bleCharacteristic->setValue("CONNECTED");
+        bleCharacteristic->notify();  // <---- Add this line
     }
+
     void onDisconnect(BLEServer *pServer) {
         deviceConnected = false;
         Serial.println("Device disconnected...");
@@ -74,24 +79,27 @@ void loop() {
     if (deviceConnected) {
         std::string readValue = bleCharacteristic->getValue();
         Serial.printf("The new characteristic value as a STRING is: %s\n", readValue.c_str());
-        String str = readValue.c_str();
 
-        if (showMessage) {
-            // Display the "Read from BLE client..." message for 1 second
-            drawScreenTextWithBackground("Read from BLE client:\n\n" + str, TFT_GREEN);
-            delay(1000);  // Hold message on screen for 1 second
-            showMessage = false;  // Move to next screen after showing once
-        } else {
-            // Switch to dot movement display
-            displayMovingDots();
+        int commaIndex = String(readValue.c_str()).indexOf('-');
+        if (commaIndex > 0) {
+            redX = String(readValue.c_str()).substring(0, commaIndex).toInt();
+            redY = String(readValue.c_str()).substring(commaIndex + 1).toInt();
         }
-    } else if (previouslyConnected) {
-        drawScreenTextWithBackground("Disconnected. Reset M5 device to reinitialize BLE.", TFT_RED);
-        timer = 0;
+
+        // Draw both dots
+        M5.Lcd.fillScreen(BLACK);
+        M5.Lcd.fillRect(dotX, dotY, 5, 5, BLUE); // Local Blue Dot
+        M5.Lcd.fillRect(redX, redY, 5, 5, RED);  // Opponent's Red Dot
+
+        // Send server position back to the client
+        String positionUpdate = String(dotX) + "-" + String(dotY);
+        bleCharacteristic->setValue(positionUpdate.c_str());
+        bleCharacteristic->notify();  // <---- Make sure to notify the client
     }
 
-    delay(100);  // Adjust refresh rate for smooth transitions
+    delay(50);  // Adjust refresh rate for smooth transitions
 }
+
 
 ///////////////////////////////////////////////////////////////
 // Colors the background and then writes the text on top
