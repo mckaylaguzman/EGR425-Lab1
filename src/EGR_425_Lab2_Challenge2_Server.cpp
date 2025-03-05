@@ -13,6 +13,7 @@ BLECharacteristic *bleCharacteristic;
 bool deviceConnected = false;
 bool previouslyConnected = false;
 bool showMessage = true;  // Show connection message first
+bool gameOverFlag = false; // Flag to track if game is over
 
 // Gamepad Variables
 Adafruit_seesaw gamepad;
@@ -25,7 +26,13 @@ int dotSpeed = 1;
 
 // Opponent's Red Dot (Client-controlled)
 int redX = -1, redY = -1;  // Start with invalid values
-int lastReceivedRedX = -1, lastReceivedRedY = -1;  // Track last position
+
+// Game timing
+unsigned long gameStartTime = 0;
+float gameTimeElapsed = 0.0;
+
+// Collision threshold
+const int COLLISION_DISTANCE = 10;
 
 ///////////////////////////////////////////////////////////////
 // BLE UUIDs
@@ -41,6 +48,8 @@ static String BLE_BROADCAST_NAME = "Mckaylas M5Core2024";
 ///////////////////////////////////////////////////////////////
 void broadcastBleServer();
 void drawScreenTextWithBackground(String text, int backgroundColor);
+void gameOver();
+void checkCollision();
 
 ///////////////////////////////////////////////////////////////
 // BLE Server Callback Methods
@@ -50,7 +59,11 @@ class MyServerCallbacks: public BLEServerCallbacks {
         deviceConnected = true;
         previouslyConnected = true;
         showMessage = true;  // Reset flag to show the message when connecting
+        gameOverFlag = false; // Reset game over state
         Serial.println("Device connected...");
+
+        // Initialize game start time
+        gameStartTime = millis();
 
         // Notify client to transition to game screen
         bleCharacteristic->setValue("CONNECTED");
@@ -60,6 +73,35 @@ class MyServerCallbacks: public BLEServerCallbacks {
     void onDisconnect(BLEServer *pServer) {
         deviceConnected = false;
         Serial.println("Device disconnected...");
+    }
+};
+
+///////////////////////////////////////////////////////////////
+// BLE Characteristic Callback Methods
+///////////////////////////////////////////////////////////////
+class MyCharacteristicCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+        std::string value = pCharacteristic->getValue();
+        
+        if (value.length() > 0) {
+            Serial.println("Received from client: " + String(value.c_str()));
+            
+            // Parse X-Y coordinates from client
+            String receivedData = String(value.c_str());
+            int dashIndex = receivedData.indexOf('-');
+            
+            if (dashIndex > 0) {
+                int tempRedX = receivedData.substring(0, dashIndex).toInt();
+                int tempRedY = receivedData.substring(dashIndex + 1).toInt();
+                
+                // Update red dot position
+                redX = tempRedX;
+                redY = tempRedY;
+                
+                // Check for collision after updating position
+                checkCollision();
+            }
+        }
     }
 };
 
@@ -90,7 +132,7 @@ void setup() {
 // Main Loop
 ///////////////////////////////////////////////////////////////
 void loop() {
-    if (deviceConnected) {
+    if (deviceConnected && !gameOverFlag) {
         // Read joystick input for the server's movement
         uint32_t buttons = gamepad.digitalReadBulk(0xFFFF);
         int joyX = 1023 - gamepad.analogRead(14);
@@ -105,38 +147,78 @@ void loop() {
         dotX = constrain(dotX, 0, 315);
         dotY = constrain(dotY, 0, 235);
 
-        std::string readValue = bleCharacteristic->getValue();
-        if (!readValue.empty() && readValue.find('-') != std::string::npos) {
-            int commaIndex = String(readValue.c_str()).indexOf('-');
-            if (commaIndex > 0) {
-                int tempRedX = String(readValue.c_str()).substring(0, commaIndex).toInt();
-                int tempRedY = String(readValue.c_str()).substring(commaIndex + 1).toInt();
+        // Check for collision
+        checkCollision();
 
-                if (!(tempRedX == dotX && tempRedY == dotY)) {  
-                    redX = tempRedX;
-                    redY = tempRedY;
-                }
-            }
+        // Update game time if still playing
+        if (!gameOverFlag) {
+            gameTimeElapsed = (millis() - gameStartTime) / 1000.0;
         }
-        redX = constrain(redX, 0, 315);
-        redY = constrain(redY, 0, 235);
 
+        // Draw the game screen
         M5.Lcd.fillScreen(BLACK);
         M5.Lcd.fillRect(dotX, dotY, 5, 5, BLUE); // Local Server Blue Dot
-        M5.Lcd.fillRect(redX, redY, 5, 5, RED);  // Opponent's Red Dot
+        
+        // Only draw red dot if valid coordinates received
+        if (redX >= 0 && redY >= 0) {
+            M5.Lcd.fillRect(redX, redY, 5, 5, RED);  // Opponent's Red Dot
+        }
+        
+        // Show game time
+        M5.Lcd.setCursor(5, 5);
+        M5.Lcd.setTextSize(1);
+        M5.Lcd.printf("Time: %.2fs", gameTimeElapsed);
+        M5.Lcd.setTextSize(3);
 
+        // Send our position to client
         String positionUpdate = String(dotX) + "-" + String(dotY);
         bleCharacteristic->setValue(positionUpdate.c_str());
         bleCharacteristic->notify();
-    } else if (previouslyConnected) {
+    } else if (previouslyConnected && !gameOverFlag) {
         drawScreenTextWithBackground("Disconnected. Restart M5 to reconnect.", TFT_RED);
     }
 
     delay(30); // Smooth movement update rate
 }
 
+///////////////////////////////////////////////////////////////
+// Check for collision between dots
+///////////////////////////////////////////////////////////////
+void checkCollision() {
+    // Only check collision if we have valid coordinates for red dot
+    if (redX >= 0 && redY >= 0 && !gameOverFlag) {
+        int dx = abs(dotX - redX);
+        int dy = abs(dotY - redY);
+        
+        if (dx < COLLISION_DISTANCE && dy < COLLISION_DISTANCE) {
+            gameOver();
+        }
+    }
+}
 
-
+///////////////////////////////////////////////////////////////
+// Game Over Function
+///////////////////////////////////////////////////////////////
+void gameOver() {
+    gameOverFlag = true;
+    gameTimeElapsed = (millis() - gameStartTime) / 1000.0;
+    
+    M5.Lcd.fillScreen(RED);
+    M5.Lcd.setTextColor(WHITE);
+    M5.Lcd.setTextSize(3);
+    
+    M5.Lcd.setCursor(50, 100);
+    M5.Lcd.print("GAME OVER");
+    
+    M5.Lcd.setCursor(50, 150);
+    M5.Lcd.setTextSize(2);
+    M5.Lcd.printf("Time: %.2f seconds", gameTimeElapsed);
+    
+    // Optional: Send game over notification to client
+    String gameOverMsg = "GAMEOVER-" + String(gameTimeElapsed, 2);
+    bleCharacteristic->setValue(gameOverMsg.c_str());
+    bleCharacteristic->notify();
+}
 
 ///////////////////////////////////////////////////////////////
 // BLE Server Broadcast Function
@@ -152,6 +234,7 @@ void broadcastBleServer() {
         BLECharacteristic::PROPERTY_NOTIFY |
         BLECharacteristic::PROPERTY_INDICATE
     );
+    bleCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
     bleCharacteristic->setValue("Hello BLE World!");
     bleService->start();
 
