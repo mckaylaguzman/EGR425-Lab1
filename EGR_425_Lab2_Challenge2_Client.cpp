@@ -18,6 +18,10 @@ Adafruit_seesaw gamepad;
 #define BUTTON_START 16
 #define BUTTON_SELECT 0
 
+// Button state tracking
+bool startButtonPressed = false;
+bool selectButtonPressed = false;
+
 // Client's Blue Dot (Local)
 int blueX = 150, blueY = 100, blueSpeed = 1;
 bool showGameScreen = false;  // Flag to control screen transition
@@ -256,6 +260,32 @@ void sendGamepadData() {
     int joyX = 1023 - gamepad.analogRead(14);
     int joyY = 1023 - gamepad.analogRead(15);
 
+    // Check Start button - Increase speed, wrap around from 5 to 1
+    // Note: Using digitalRead() directly for buttons since it's more reliable for edge detection
+    bool startCurrent = !gamepad.digitalRead(BUTTON_START); // Button is active LOW (pressed = 0)
+    if (startCurrent && !startButtonPressed) {
+        // Start button was just pressed (rising edge)
+        blueSpeed++;
+        if (blueSpeed > 5) blueSpeed = 1;
+        
+        // Display speed briefly
+        M5.Lcd.fillRect(0, 0, 100, 30, BLACK);
+        M5.Lcd.setCursor(5, 5);
+        M5.Lcd.setTextSize(2);
+        M5.Lcd.printf("Speed: %d", blueSpeed);
+        M5.Lcd.setTextSize(3);
+    }
+    startButtonPressed = startCurrent;
+
+    // Check Select button - Warp to random position
+    bool selectCurrent = !gamepad.digitalRead(BUTTON_SELECT); // Button is active LOW
+    if (selectCurrent && !selectButtonPressed) {
+        // Select button was just pressed (rising edge)
+        blueX = random(10, 310);
+        blueY = random(10, 230);
+    }
+    selectButtonPressed = selectCurrent;
+
     float normX = (joyX - 512) / 512.0;
     float normY = (joyY - 512) / 512.0;
 
@@ -277,10 +307,10 @@ void sendGamepadData() {
         M5.Lcd.fillRect(redX, redY, 5, 5, RED);
     }
     
-    // Show game time
+    // Show game time and current speed
     M5.Lcd.setCursor(5, 5);
     M5.Lcd.setTextSize(1);
-    M5.Lcd.printf("Time: %.2fs", gameTimeElapsed);
+    M5.Lcd.printf("Time: %.2fs  Speed: %d", gameTimeElapsed, blueSpeed);
     M5.Lcd.setTextSize(3);
 
     // Send position to server

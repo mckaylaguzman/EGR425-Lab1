@@ -20,9 +20,15 @@ Adafruit_seesaw gamepad;
 #define BUTTON_START 16
 #define BUTTON_SELECT 0
 
+// Button debounce variables
+unsigned long lastStartButtonPress = 0;
+unsigned long lastSelectButtonPress = 0;
+const int debounceDelay = 300;  // Milliseconds for button debounce
+
 // Server's Blue Dot (Local)
 int dotX = 150, dotY = 100;
-int dotSpeed = 1;
+int dotSpeed = 1;  // Starting speed
+const int MAX_DOT_SPEED = 5;
 
 // Opponent's Red Dot (Client-controlled)
 int redX = -1, redY = -1;  // Start with invalid values
@@ -50,6 +56,7 @@ void broadcastBleServer();
 void drawScreenTextWithBackground(String text, int backgroundColor);
 void gameOver();
 void checkCollision();
+void warpToRandomLocation();
 
 ///////////////////////////////////////////////////////////////
 // BLE Server Callback Methods
@@ -113,6 +120,9 @@ void setup() {
     M5.Lcd.setTextSize(3);
     M5.Lcd.fillScreen(BLACK);
 
+    // Initialize random seed for warp function
+    randomSeed(analogRead(0));
+
     Serial.println("Starting BLE...");
     BLEDevice::init(BLE_BROADCAST_NAME.c_str());
 
@@ -132,7 +142,44 @@ void setup() {
 // Main Loop
 ///////////////////////////////////////////////////////////////
 void loop() {
-    if (deviceConnected && !gameOverFlag) {
+    // If game is over, don't update the game state anymore
+    // Just check for restart button input
+    if (gameOverFlag) {
+        // Check if both Start and Select buttons are pressed to restart
+        if (!gamepad.digitalRead(BUTTON_START) && !gamepad.digitalRead(BUTTON_SELECT)) {
+            // Reset the game
+            gameOverFlag = false;
+            if (deviceConnected) {
+                gameStartTime = millis();
+                redX = -1;
+                redY = -1;
+                dotSpeed = 1;  // Reset speed when restarting game
+            }
+        }
+        
+        // Don't proceed with the rest of the loop
+        delay(100);
+        return;
+    }
+
+    if (deviceConnected) {
+        // Check for START button press to increase movement speed
+        if (!gamepad.digitalRead(BUTTON_START) && (millis() - lastStartButtonPress > debounceDelay)) {
+            lastStartButtonPress = millis();
+            
+            // Increment speed and wrap around if it exceeds max
+            dotSpeed = (dotSpeed % MAX_DOT_SPEED) + 1;
+            
+            Serial.print("Speed changed to: ");
+            Serial.println(dotSpeed);
+        }
+        
+        // Check for SELECT button press to warp to random location
+        if (!gamepad.digitalRead(BUTTON_SELECT) && (millis() - lastSelectButtonPress > debounceDelay)) {
+            lastSelectButtonPress = millis();
+            warpToRandomLocation();
+        }
+        
         // Read joystick input for the server's movement
         uint32_t buttons = gamepad.digitalReadBulk(0xFFFF);
         int joyX = 1023 - gamepad.analogRead(14);
@@ -164,10 +211,10 @@ void loop() {
             M5.Lcd.fillRect(redX, redY, 5, 5, RED);  // Opponent's Red Dot
         }
         
-        // Show game time
+        // Show game time and current speed
         M5.Lcd.setCursor(5, 5);
         M5.Lcd.setTextSize(1);
-        M5.Lcd.printf("Time: %.2fs", gameTimeElapsed);
+        M5.Lcd.printf("Time: %.2fs   Speed: %d", gameTimeElapsed, dotSpeed);
         M5.Lcd.setTextSize(3);
 
         // Send our position to client
@@ -179,6 +226,20 @@ void loop() {
     }
 
     delay(30); // Smooth movement update rate
+}
+
+///////////////////////////////////////////////////////////////
+// Warp to Random Location Function
+///////////////////////////////////////////////////////////////
+void warpToRandomLocation() {
+    // Generate random position within the screen bounds
+    dotX = random(5, 310);
+    dotY = random(5, 230);
+    
+    Serial.print("Warped to position: ");
+    Serial.print(dotX);
+    Serial.print(", ");
+    Serial.println(dotY);
 }
 
 ///////////////////////////////////////////////////////////////
@@ -213,6 +274,11 @@ void gameOver() {
     M5.Lcd.setCursor(50, 150);
     M5.Lcd.setTextSize(2);
     M5.Lcd.printf("Time: %.2f seconds", gameTimeElapsed);
+    
+    // Add instructions for restarting
+    M5.Lcd.setCursor(20, 200);
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.print("Press START+SELECT together to play again");
     
     // Optional: Send game over notification to client
     String gameOverMsg = "GAMEOVER-" + String(gameTimeElapsed, 2);
