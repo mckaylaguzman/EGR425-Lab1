@@ -28,6 +28,7 @@ bool showGameScreen = false;  // Flag to control screen transition
 
 // Server's Red Dot (Remote)
 int redX = -1, redY = -1;  // Red dot starts as invalid
+bool redDotInitialized = false;  // Flag to track if we've received valid data for red dot
 
 // Game timing
 unsigned long gameStartTime = 0;
@@ -35,6 +36,9 @@ float gameTimeElapsed = 0.0;
 
 // Collision threshold
 const int COLLISION_DISTANCE = 10;
+
+// Debug flags
+bool debugMode = false;  // Set to true to display debug info
 
 ///////////////////////////////////////////////////////////////
 // BLE UUIDs
@@ -81,12 +85,35 @@ static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, ui
     else {
         int dashIndex = receivedData.indexOf('-');
         if (dashIndex > 0) {
-            redX = receivedData.substring(0, dashIndex).toInt();
-            redY = receivedData.substring(dashIndex + 1).toInt();
+            // Parse the position data
+            int newRedX = receivedData.substring(0, dashIndex).toInt();
+            int newRedY = receivedData.substring(dashIndex + 1).toInt();
             
-            // Check for collision after updating position
-            if (!gameOverFlag) {
-                checkCollision();
+            // Only update if values are valid (non-negative and within screen bounds)
+            if (newRedX >= 0 && newRedY >= 0 && newRedX < 320 && newRedY < 240) {
+                redX = newRedX;
+                redY = newRedY;
+                
+                // Mark that we have valid data for the red dot
+                if (!redDotInitialized) {
+                    redDotInitialized = true;
+                    
+                    // Initialize blue dot in a different area to avoid immediate collision
+                    if (abs(blueX - redX) < 50 && abs(blueY - redY) < 50) {
+                        blueX = (redX < 160) ? random(200, 300) : random(20, 120);
+                        blueY = (redY < 120) ? random(150, 220) : random(20, 90);
+                    }
+                }
+                
+                // Check for collision after updating position, but only if we've had valid data for a while
+                // This prevents instant game over due to random positions or data initialization
+                static unsigned long firstDataTime = 0;
+                if (!firstDataTime) firstDataTime = millis();
+                
+                // Wait 2 seconds after first receiving data before allowing collisions
+                if (!gameOverFlag && redDotInitialized && (millis() - firstDataTime > 2000)) {
+                    checkCollision();
+                }
             }
         }
     }
@@ -97,11 +124,19 @@ static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, ui
 ///////////////////////////////////////////////////////////////
 void checkCollision() {
     // Only check collision if we have valid coordinates for red dot
-    if (redX >= 0 && redY >= 0 && !gameOverFlag) {
+    if (redX >= 0 && redY >= 0 && !gameOverFlag && redDotInitialized) {
         int dx = abs(blueX - redX);
         int dy = abs(blueY - redY);
         
+        if (debugMode) {
+            Serial.printf("Distance: dx=%d, dy=%d, threshold=%d\n", dx, dy, COLLISION_DISTANCE);
+        }
+        
+        // Only trigger collision if dots are very close
         if (dx < COLLISION_DISTANCE && dy < COLLISION_DISTANCE) {
+            if (debugMode) {
+                Serial.println("COLLISION DETECTED");
+            }
             gameOver();
         }
     }
@@ -114,6 +149,7 @@ class MyClientCallback : public BLEClientCallbacks {
     void onConnect(BLEClient *pclient) {
         deviceConnected = true;
         gameOverFlag = false;
+        redDotInitialized = false;  // Reset this flag on new connection
         gameStartTime = millis();
         Serial.println("Device connected...");
     }
